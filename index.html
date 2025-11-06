@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>English Writing Coach (B2)</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- marked.js CDN (Markdown to HTML) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        /* Interフォントの読み込み（Tailwindのデフォルトに合わせる） */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Markdownで生成されるテーブル用のスタイル */
+        #result-display table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+            margin-bottom: 1rem;
+            border: 1px solid #e2e8f0;
+        }
+        #result-display th,
+        #result-display td {
+            border: 1px solid #e2e8f0;
+            padding: 0.75rem;
+            text-align: left;
+        }
+        #result-display th {
+            background-color: #f8fafc;
+            font-weight: 600;
+        }
+        #result-display tr:nth-child(even) {
+            background-color: #f1f5f9;
+        }
+        #result-display h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-top: 1.5rem;
+            margin-bottom: 0.5rem;
+            border-bottom: 2px solid #cbd5e1;
+            padding-bottom: 0.25rem;
+        }
+         /* ローディングスピナー */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+
+    <div class="bg-white p-6 sm:p-8 rounded-xl shadow-lg w-full max-w-3xl">
+        <h1 class="text-2xl sm:text-3xl font-bold text-center text-gray-800 mb-6">
+            English Writing Coach (B2)
+        </h1>
+        
+        <p class="text-gray-600 mb-4 text-center">
+            CEFR B2レベルの学習者向けライティングコーチです。
+            <br>
+            下のボックスに英文を入力して、フィードバックをもらいましょう。
+        </p>
+
+        <!-- 生徒の入力エリア -->
+        <div class="mb-4">
+            <label for="student-text" class="block text-sm font-medium text-gray-700 mb-2">あなたの英文 (Your Text):</label>
+            <textarea id="student-text" rows="10" class="w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-150" placeholder="Write your text here... (ここに英文を入力してください)"></textarea>
+        </div>
+
+        <!-- 実行ボタン -->
+        <button id="submit-button" class="w-full bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition duration-200 ease-in-out">
+            フィードバックをもらう (Get Feedback)
+        </button>
+
+        <!-- ローディングインジケーター -->
+        <div id="loading-spinner" class="loader hidden"></div>
+
+        <!-- エラーメッセージ表示エリア -->
+        <div id="error-message" class="hidden mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg"></div>
+
+        <!-- 結果表示エリア -->
+        <div id="result-container" class="mt-6 hidden">
+            <h2 class="text-xl sm:text-2xl font-semibold text-gray-800 mb-4 border-b pb-2">
+                コーチからのフィードバック (Feedback from Coach)
+            </h2>
+            <div id="result-display" class="prose max-w-none text-gray-700">
+                <!-- ここにGeminiからのMarkdownがHTMLに変換されて挿入される -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM要素の取得
+        const studentTextInput = document.getElementById('student-text');
+        const submitButton = document.getElementById('submit-button');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const resultContainer = document.getElementById('result-container');
+        const resultDisplay = document.getElementById('result-display');
+        const errorMessage = document.getElementById('error-message');
+
+        // ★★★ 重要 ★★★
+        // ここに、新しくデプロイした「code_writing_coach.gs」のウェブアプリURLを貼り付けます
+        const GAS_COACH_URL = "YOUR_NEW_GAS_URL_HERE";
+
+
+        // 送信ボタンのクリックイベント
+        submitButton.addEventListener('click', async () => {
+            const studentText = studentTextInput.value;
+
+            // 入力チェック
+            if (!studentText.trim()) {
+                showError("テキストを入力してください。");
+                return;
+            }
+
+            // UIをローディング状態に設定
+            setLoading(true);
+
+            try {
+                // Gemini API呼び出し (GASプロキシ経由)
+                const feedbackText = await callGasProxy(studentText);
+                
+                // MarkdownをHTMLに変換して表示
+                // marked.js が <script> でグローバルにロードされている
+                const htmlContent = marked.parse(feedbackText);
+                
+                displayResult(htmlContent);
+
+            } catch (error) {
+                console.error("API Error:", error);
+                showError(`フィードバックの取得中にエラーが発生しました: ${error.message}`);
+            } finally {
+                // UIをローディング解除
+                setLoading(false);
+            }
+        });
+
+        /**
+         * GAS（中継サーバー）を呼び出す関数
+         * @param {string} studentText - 生徒の入力テキスト
+         * @returns {Promise<string>} - Geminiからのレスポンス（Markdownテキスト）
+         */
+        async function callGasProxy(studentText) {
+            
+            if (GAS_COACH_URL === "https://script.google.com/macros/s/AKfycbxrskyeZ0BK2NyOcnEQIiYJ5nZF4oTKXFq-j5spb4QTdceJEFNnqN9vAcsW33zKyBuegw/exec" || !GAS_COACH_URL) {
+                throw new Error("HTMLファイルが正しく設定されていません。管理者に連絡してください。(GAS_COACH_URL is not set)");
+            }
+            
+            // GASに送信するデータ
+            const payload = {
+                studentText: studentText
+            };
+
+            // API呼び出し（fetch）と指数関数的バックオフによるリトライ
+            let response;
+            let delay = 1000; // 最初の遅延は1秒
+            const maxRetries = 5;
+
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    response = await fetch(GAS_COACH_URL, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'text/plain;charset=utf-8', // GASのdoPostで受けるため
+                        },
+                        body: JSON.stringify(payload),
+                        mode: 'cors'
+                    });
+
+                    if (response.status === 429) {
+                        // 429 (Too Many Requests) の場合はリトライ
+                        throw new Error('Rate limit exceeded');
+                    } else if (!response.ok) {
+                        // その他のHTTPエラー
+                        const errorText = await response.text();
+                        console.error("HTTP Error Response:", errorText);
+                        throw new Error(`HTTP error! status: ${response.status} ${errorText}`);
+                    }
+                    
+                    // 成功したらループを抜ける
+                    break; 
+
+                } catch (error) {
+                    console.warn(`Attempt ${i + 1}/${maxRetries} failed: ${error.message}. Retrying in ${delay}ms...`);
+                    if (i === maxRetries - 1) {
+                        // 最大リトライ回数に達したら最終エラーを投げる
+                        throw error;
+                    }
+                    // リトライ前に待機
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= 2; // 遅延時間を2倍にする
+                }
+            }
+
+            // レスポンスのJSONをパース
+            const result = await response.json();
+
+            if (result.success === true) {
+                // GASから成功のレスポンス
+                return result.feedback;
+            } else {
+                // GASがエラーを返した場合
+                console.error("GAS Error:", result.error);
+                throw new Error(`サーバー（GAS）側でエラーが発生しました: ${result.error}`);
+            }
+        }
+
+        /**
+         * UIのローディング状態を設定する
+         * @param {boolean} isLoading - ローディング中かどうか
+         */
+        function setLoading(isLoading) {
+            if (isLoading) {
+                submitButton.disabled = true;
+                submitButton.classList.add('opacity-50', 'cursor-not-allowed');
+                loadingSpinner.classList.remove('hidden');
+                resultContainer.classList.add('hidden');
+                errorMessage.classList.add('hidden');
+            } else {
+                submitButton.disabled = false;
+                submitButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                loadingSpinner.classList.add('hidden');
+            }
+        }
+
+        /**
+         * 結果を表示する
+         * @param {string} htmlContent - 表示するHTMLコンテンツ
+         */
+        function displayResult(htmlContent) {
+            resultDisplay.innerHTML = htmlContent;
+            resultContainer.classList.remove('hidden');
+            errorMessage.classList.add('hidden');
+        }
+
+        /**
+         * エラーメッセージを表示する
+         * @param {string} message - 表示するエラーメッセージ
+         */
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.classList.remove('hidden');
+            resultContainer.classList.add('hidden');
+        }
+
+    </script>
+</body>
+</html>
